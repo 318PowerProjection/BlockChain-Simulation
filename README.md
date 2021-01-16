@@ -1,2 +1,2 @@
 # BlockChain-Simulation
-![/Output/Graph/seed=1/actor_loss.png]
+!(/Output/Graph/seed=1/actor_loss.png)
