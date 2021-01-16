@@ -1,6 +1,7 @@
 # BlockChain-Simulation
-![Seed=1 Actor Loss](/Output/Graph/seed=1/actor_loss.png)[seed=1]
-![Seed=2 Actor Loss](/Output/Graph/seed=2/actor_loss.png)
-![Seed=3 Actor Loss](/Output/Graph/seed=3/actor_loss.png)
-![Seed=4 Actor Loss](/Output/Graph/seed=4/actor_loss.png)
-![Seed=5 Actor Loss](/Output/Graph/seed=5/actor_loss.png)
+<table>
+    <tr>
+        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D1/actor_loss.png" >seed=1 </center></td>
+        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D2/actor_loss.png" >seed=1 </center></td>
+    </tr>
+</table>
