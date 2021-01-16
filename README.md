@@ -1,4 +1,5 @@
 # BlockChain-Simulation
+不同seed下的loss图像
 <table>
     <tr>
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D1/actor_loss.png" >seed=1 actor loss </center></td>
