@@ -22,7 +22,7 @@
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D5/critic_loss.png" >seed=5 critic loss</center></td>
     </tr>
     <tr>
-        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D1926/actor_loss.png" >seed=19260817 actor loss </center></td>
-        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D1926/critic_loss.png" >seed=19260817 critic loss</center></td>
+        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D19260817/actor_loss.png" >seed=19260817 actor loss </center></td>
+        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Output/Graph/seed%3D19260817/critic_loss.png" >seed=19260817 critic loss</center></td>
     </tr>
 </table>
