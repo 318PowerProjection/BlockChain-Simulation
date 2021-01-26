@@ -3,14 +3,18 @@ from MST import Mst
 from Divide import DivideBand
 from DDPG import DDPG
 import numpy as np
+import torch
 import sys
+import os
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from params import max_episode, exploration_noise, noise_attenuation, save_interval, state_history, max_action, delta_t, graph_update_interval
+from params import max_episode, exploration_noise, noise_attenuation, save_interval, state_history, max_action, \
+    delta_t, graph_update_interval, numpy_seed, load
 
 # type = 1 delta_t事件
 # type = 2 区块到达事件
+
 
 
 class Edge:
@@ -24,12 +28,13 @@ class Chain:
     def __init__(self, tmpsource, tmpdest, node_count):
         self.block_finish_time = []
         self.block_arrive_time = []
+        self.block_trans_time = []
         self.block_size = []
         self.block_count = 0        # 到达链路的区块数量
         self.cur_block = -1         # 已经传输完成的区块编号
         self.RTgraph = []
         self.BDgraph = []
-        self.source = tmpsource  # int
+        self.source = tmpsource     # int
         self.dest = tmpdest         # list
         self.lastblock_finish_time = 0.0
         self.node_count = node_count
@@ -43,6 +48,7 @@ class Chain:
         self.block_arrive_time.append(task.time)
         self.block_size.append(task.data)
         self.block_finish_time.append(-1)
+        self.block_trans_time.append(-1)
 
     def check_remain(self):     # 0 不空闲 1 空闲
         if self.cur_block == -1:          # 没有传输任何区块
@@ -60,13 +66,15 @@ class Chain:
                 break
             i = self.cur_block + 1
             transTime = self.getTransTime(self.block_size[i])
-            self.block_finish_time[i] = max(self.block_arrive_time[i], self.lastblock_finish_time) + transTime
+            self.block_trans_time = transTime
+            tmp_finish_time = max(self.block_arrive_time[i], self.lastblock_finish_time) + transTime
+            if tmp_finish_time > env.next_delta_task_time:      # 如果下一次更改路由之前传不完当前区块的话就不传现在这个
+                break
+            self.block_finish_time[i] = tmp_finish_time
             self.lastblock_finish_time = self.block_finish_time[i]
             tmp_count += 1.0
             tmp_reward += self.block_finish_time[i] - self.block_arrive_time[i]
             self.cur_block += 1
-            if self.block_finish_time[i] > env.next_delta_task_time:
-                break
         return tmp_count, tmp_reward
 
     def getTransTime(self, data):                 # 获得当前区块的最大传输时间 BFS
@@ -79,11 +87,6 @@ class Chain:
             now = q.get()
             for _next in self.RTgraph[now]:
                 if not vis[_next]:
-
-                    if self.BDgraph[now][_next] == 0:
-                        self.FLAG = True
-                        return 10000
-
                     trans_time_for_node[_next] = trans_time_for_node[now] + data / self.BDgraph[now][_next]
                     q.put(_next)
                     vis[_next] = 1
@@ -99,6 +102,7 @@ class Environment:
         self.band = []                      # init_graph
         self.source = []                    # init_graph
         self.dest = []                      # init_graph
+        self.block_size = []                # init_graph
         self.edge = []                      # init_graph
         self.edge_count = 0                 # init_graph
         self.node_count = 0                 # init_graph
@@ -124,8 +128,8 @@ class Environment:
         self.FLAG = False
         self.edge_for_mst = []
 
-        self.seed = int(sys.argv[1])
-        # self.seed = 1
+        # self.seed = int(sys.argv[1])
+        self.seed = 3
         self.result = 0.0
         critic_output = open('./Output/Loss/seed=%d/critic_loss.txt' % self.seed, 'w')
         actor_output = open('./Output/Loss/seed=%d/actor_loss.txt' % self.seed, 'w')
@@ -171,6 +175,10 @@ class Environment:
         self.noise = max(self.noise, 0)
         self.noise = max(self.noise, 0)
 
+        # 生成Output文件夹
+        if not os.path.exists('./Output/Model/seed=%d/' % self.seed):
+            os.mkdir('./Output/Model/seed=%d/' % self.seed)
+
     def init_graph(self):
         tmp_graph = []
         tmp_band = []
@@ -185,6 +193,7 @@ class Environment:
         for i in range(self.chain_count):
             self.source.append(list(map(int, node_file[i+i].split()))[0])
             self.dest.append(list(map(int, node_file[i+i+1].split())))
+        self.block_size = list(map(float, node_file[len(node_file)-1].split()))
         readfile.close()
 
         self.graph = [[0 for _i in range(self.node_count)] for _j in range(self.node_count)]
@@ -220,8 +229,10 @@ def convention_action(action):     # 规约化action 使用正态分布加噪声
 
 
 def convention_state(state):
-    for i in range(state_history * env.chain_count):
-        state[i] /= 50.0
+    p = state_history-1
+    for i in range(env.chain_count):
+        state[p] /= 50.0
+        p += state_history
     for j in range(state_history * env.chain_count, state_history * env.chain_count + env.chain_count):
         state[j] /= 10.0
     return state
@@ -251,7 +262,7 @@ def solve_delta(env):
         tree = mst.kruskal()   # 邻接表形式 无向边
         mst_for_divide.append(tree)
 
-    divide = DivideBand(env.node_count, mst_for_divide, env.band, env.source, env.dest)
+    divide = DivideBand(env.node_count, mst_for_divide, env.band, env.source, env.dest, env.block_size)
     env.route_graph = mst_for_divide         # 最小生成树实际上就是路由方案
     env.band_graph = divide.binary_search()   # 分配带宽
     for i in range(env.chain_count):
@@ -272,11 +283,14 @@ def update_state(env):            # state: [chain1_history_state, chain2_history
             env.next_state[p+i*state_history] = env.next_state[p+1+i*state_history]
         env.next_state[i*state_history+state_history-1] = count_for_each_chain[i]
 
+    for i in range(env.chain_count):
+        env.next_state[env.chain_count*state_history+i] = env.chain[i].block_count - env.chain[i].cur_block
+
     env.next_state = convention_state(env.next_state)
         
     tmp_count = 0
     for i in range(env.chain_count):
-        tmp_count += env.chain[i].block_count       # block_count是区块数量
+        tmp_count += env.chain[i].cur_block+1       # block_count是区块数量
     if tmp_count == env.total_block_count:          # tmp_count计算已经传输完成的区块数量
         env.done = True
 
@@ -295,6 +309,7 @@ def show(it):
     plt.title("Critic Loss")
     plt.xlabel("Step")
     plt.ylabel("Critic Loss")
+    plt.grid(True)
     plt.plot(x, y)
     plt.savefig('./Output/Graph/seed=%d/critic_loss.png' % number)
     plt.close()
@@ -308,6 +323,7 @@ def show(it):
     plt.title("Actor Loss")
     plt.xlabel("Step")
     plt.ylabel("Actor Loss")
+    plt.grid(True)
     plt.plot(x, y)
     plt.savefig('./Output/Graph/seed=%d/actor_loss.png' % number)
     plt.close()
@@ -317,14 +333,55 @@ def show(it):
     print("====================================")
 
 
+def debug_print():
+    debug_file = open("debug_info.txt", 'w')
+
+    for it in range(env.chain_count):
+        g1 = env.chain[it].RTgraph
+        g2 = env.chain[it].BDgraph
+        for i in range(len(g1)):
+            for j in range(len(g1[i])):
+                print(g1[i][j], end=' ', file=debug_file)
+            print('', file=debug_file)
+        print('', file=debug_file)
+        for i in range(len(g2)):
+            for j in range(len(g2[i])):
+                print('\t%.2lf' % g2[i][j], end=' ', file=debug_file)
+            print('', file=debug_file)
+
+    cnt = 0
+    for it in range(env.chain_count):
+        for i in range(env.chain[it].block_count):
+            print('%d\t%.2f\t%.2f' % (cnt, env.chain[it].block_arrive_time[i], env.chain[it].block_finish_time[i]), file=debug_file)
+            cnt += 1
+
+    debug_file.close()
+
+
+def check_done():
+    cnt = 0
+    for i in range(env.chain_count):
+        cnt += env.chain[i].cur_block+1
+    if cnt == env.total_block_count:
+        return 1
+    return 0
+
+
 if __name__ == '__main__':
     env = Environment()
     env.init_trace()
     env.init_graph()
 
+    np.random.seed(numpy_seed)
+    torch.manual_seed(env.seed)
+
     state_dim = state_history * env.chain_count + env.chain_count
     action_dim = env.edge_count * env.chain_count
-    agent = DDPG(state_dim, action_dim, max_action, env.seed)
+    agent = DDPG(state_dim, action_dim, max_action)
+
+    if load:
+        agent.load_train(env.seed, 19980)
+        env.noise = 0.0
 
     for it in range(max_episode):
         env.init_env()
@@ -337,18 +394,22 @@ if __name__ == '__main__':
                 if block_in_interval >= 1.0:
                     env.reward = -reward_in_interval / block_in_interval    # reward是平均时延 优化目标是越小越好，但是reward越大越好
                 else:
-                    env.reward = 0.0            # 如果上个interval没有传输，那reward就无限小
+                    env.reward = -10000.0            # 如果上个interval没有传输，那reward就无限小
                 block_in_interval = 0.0
                 reward_in_interval = 0.0
                 update_state(env)               # calc next_state 只有下一个δt的时候才能知道这段内的reward和next state
-                agent.replay_buffer.put((env.state, env.action, env.reward, env.next_state, np.float(env.done)))
-                agent.update(env.seed)          # 更新DDPG网络
+                if env.reward != 0:
+                    agent.replay_buffer.put([env.state, env.action, env.reward, env.next_state, np.float(env.done)])
+
+                # if not load and it >= 50 or load:
+                #     agent.update(env.seed)          # 更新DDPG网络
                 if env.done:
                     break
 
                 env.state = env.next_state
                 env.reward = 0.0
                 solve_delta(env)
+                # debug_print()
                 env.next_delta_task_time += delta_t
                 for i in range(env.chain_count):     # 在堵塞的情况下，更新路由后应该接着传输之前没传完的区块
                     env.chain[i].transmission()
@@ -363,14 +424,11 @@ if __name__ == '__main__':
             agent.save(env.seed, it)
         if it % graph_update_interval == 0:
             show(it)
-
-        total_reward = 0.0
-        total_count = 0.0
-        for i in range(env.chain_count):
-            for j in range(env.chain[i].block_count):
-                total_reward += env.chain[i].block_finish_time[j] - env.chain[i].block_arrive_time[j]
-            total_count += env.chain[i].block_count
-
         print("Iteration:\t%d done" % it)
+        if not load and it > 50 or load:
+            agent.update(env.seed)
+        # if it == 100:
+        debug_print()
 
     show(max_episode)
+

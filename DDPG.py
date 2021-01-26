@@ -6,6 +6,7 @@ import torch.optim as optim
 from params import tau, gamma, capacity, batch_size, update_iteration, actor_alpha, critic_alpha
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# device = 'cpu'
 
 
 class ReplayBuffer:
@@ -13,13 +14,14 @@ class ReplayBuffer:
         self.buffer = []
         self.maxSize = capacity
         self.ptr = 0
+        self.cnt = 0
 
     def put(self, data):
-        if len(self.buffer) == self.maxSize:
-            self.buffer[self.ptr] = data
-            self.ptr = (self.ptr + 1) % self.maxSize
-        else:
-            self.buffer.append(data)
+        if self.cnt < self.maxSize:
+            self.buffer.append(None)
+        self.buffer[self.ptr] = data
+        self.ptr = (self.ptr + 1) % self.maxSize
+        self.cnt += 1
 
     def take(self, batch_size):
         ind = np.random.randint(0, len(self.buffer), size=batch_size)
@@ -64,8 +66,7 @@ class Critic(nn.Module):
 
 
 class DDPG(object):
-    def __init__(self, state_dim, action_dim, max_action, seed):
-        torch.manual_seed(seed)
+    def __init__(self, state_dim, action_dim, max_action):
 
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
@@ -97,10 +98,13 @@ class DDPG(object):
 
             # Compute the target Q value
             target_Q = self.critic_target(next_state, self.actor_target(next_state))    # 求TD target
+            file = open("test_output.txt", 'w')
             target_Q = reward + (done * gamma * target_Q).detach()                 # 求TD error
-
+            print(target_Q, file=file)
             # Get current Q estimate
             current_Q = self.critic(state, action)          # 求Q值
+            print(current_Q, file=file)
+            file.close()
 
             # Compute critic loss
             critic_output = open('./Output/Loss/seed=%d/critic_loss.txt' % seed, 'a')
@@ -136,6 +140,26 @@ class DDPG(object):
 
     def save(self, seed, episode):
         torch.save(self.actor.state_dict(), './Output/Model/seed=%d/actor_%d.pth' % (seed, episode))
+        torch.save(self.critic.state_dict(), './Output/Model/seed=%d/critic_%d.pth' % (seed, episode))
+        file = open('./Output/Model/seed=%d/buffer.pth' % seed, 'w')
+        for it in self.replay_buffer.buffer:
+            print(it, file=file)
+        file.close()
 
     def load(self, seed, episode):
-        self.actor.load_state_dict(torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode)))
+        self.actor.load_state_dict(torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+
+    def load_train(self, seed, episode):
+        self.actor.load_state_dict(
+            torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+        self.critic.load_state_dict(
+            torch.load('./Output/Model/seed=%d/critic_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+        self.replay_buffer.buffer = []
+        file = open('./Output/Model/seed=%d/buffer.pth' % seed, 'r')
+        content = file.readlines()
+        file.close()
+        self.replay_buffer.ptr = len(content)-1
+        self.replay_buffer.cnt = self.replay_buffer.ptr
+        for line in content:
+            data = eval(line)
+            self.replay_buffer.buffer.append(data)

@@ -2,13 +2,15 @@ from queue import Queue
 
 
 class DivideBand:
-    def __init__(self, n, Tree, Bandwidth, source, destination):    # n个多播组
+    def __init__(self, n, Tree, Bandwidth, source, destination, data_size):    # n个多播组
         self.Tree = Tree  # Tree[ [next1,next2,...], ] 三维list T*N*N 每棵树邻接表存储
         self.bandwidth = Bandwidth
         self.n = n
         self.cost = [[0 for _ in range(self.n)] for __ in range(self.n)]
         self.source = source    # list[]
         self.destination = destination      # list[ list[], ... ]
+        self.block_size = data_size
+        self.tmp_delay = 0.0
 
         self.depth = [[0 for _ in range(self.n)] for __ in range(len(self.Tree))]    # 二维list depth[i][j] 链i中的节点j的深度
         for i in range(len(self.Tree)):
@@ -46,29 +48,27 @@ class DivideBand:
             if u not in self.destination[now]:
                 v = nowTree[u][0]
                 nowTree[v].remove(u)
-                if v!=self.source[now] and len(nowTree[v]) == 1:
+                if v != self.source[now] and len(nowTree[v]) == 1:
                     q.put(v)
         self.Tree[now] = nowTree
 
     def binary_search(self):
         for i in range(len(self.Tree)):
             self.cut(i)      # 剪枝
-
-        blocksize = 1.0           # 默认区块大小为1Mb
         L = 0.0
         R = 16.0      # s  设置传输时延上限
         bandGraph = self.tmpBandGraph.copy()
         while R - L > 1e-3:
-            TmpDelay = (R+L)/2.0
-            Judge = self.check(blocksize/TmpDelay)
+            self.tmp_delay = (R+L)/2.0
+            Judge = self.check()
             if Judge:
-                R = TmpDelay
+                R = self.tmp_delay
                 bandGraph = self.tmpBandGraph.copy()
             else:
-                L = TmpDelay
+                L = self.tmp_delay
         return bandGraph
 
-    def check(self, w):
+    def check(self):
         for i in range(self.n):      # init
             for j in range(self.n):
                 self.cost[i][j] = 0
@@ -78,7 +78,7 @@ class DivideBand:
                     self.tmpBandGraph[i][j][k] = 0
 
         for i in range(len(self.Tree)):
-            self.dfs_cost(i, self.source[i], w)     # calculate the cost of each edge
+            self.dfs_cost(i, self.source[i])     # calculate the cost of each edge
 
         for i in range(self.n):      # check
             for j in range(self.n):
@@ -86,29 +86,24 @@ class DivideBand:
                     return False
         return True
 
-    def dfs_cost(self, now, u, w):
+    def dfs_cost(self, now, u):
         maxcost = 0
         for v in self.Tree[now][u]:
             if self.depth[now][v] > self.depth[now][u]:
                 if len(self.Tree[now][v]) == 1:
-                    maxcost = self.tmpBandGraph[now][u][v] = self.depth[now][v] * w
+                    tmp2 = self.depth[now][v] * self.block_size[now] / self.tmp_delay
+                    self.tmpBandGraph[now][u][v] = tmp2
+                    self.tmpBandGraph[now][v][u] = tmp2
+                    self.cost[u][v] += tmp2
+                    self.cost[v][u] += tmp2
+                    maxcost = max(maxcost, self.tmpBandGraph[now][u][v])
                     continue
-                tmp = self.dfs_cost(now, v, w)
+
+                tmp = self.dfs_cost(now, v)
                 self.tmpBandGraph[now][u][v] = tmp
+                self.tmpBandGraph[now][v][u] = tmp
                 self.cost[u][v] += tmp
+                self.cost[v][u] += tmp
                 maxcost = max(tmp, maxcost)
         return maxcost
 
-    '''
-    def dfs_cost(self, now, u, w):                  # 链路上游的带宽要不小于下游
-        if u in self.destination[now]:
-            return self.depth[now][u] * w
-        maxcost = 0             # maxcost含义是u到后继结点里最大的带宽
-        for v in self.Tree[now][u]:
-            if self.depth[now][v] > self.depth[now][u]:
-                tmp = self.dfs_cost(now, v, w)
-                self.tmpBandGraph[now][u][v] = max(tmp, self.tmpBandGraph[now][u][v])
-                self.cost[u][v] += tmp
-                maxcost = max(maxcost, tmp)
-        return maxcost
-    '''
