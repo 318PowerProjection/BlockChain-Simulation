@@ -10,11 +10,10 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from params import max_episode, exploration_noise, noise_attenuation, save_interval, state_history, max_action, \
-    delta_t, graph_update_interval, numpy_seed, load
+    delta_t, graph_update_interval, numpy_seed, load, load_number
 
 # type = 1 delta_t事件
 # type = 2 区块到达事件
-
 
 
 class Edge:
@@ -66,7 +65,7 @@ class Chain:
                 break
             i = self.cur_block + 1
             transTime = self.getTransTime(self.block_size[i])
-            self.block_trans_time = transTime
+            self.block_trans_time[i] = transTime
             tmp_finish_time = max(self.block_arrive_time[i], self.lastblock_finish_time) + transTime
             if tmp_finish_time > env.next_delta_task_time:      # 如果下一次更改路由之前传不完当前区块的话就不传现在这个
                 break
@@ -75,6 +74,7 @@ class Chain:
             tmp_count += 1.0
             tmp_reward += self.block_finish_time[i] - self.block_arrive_time[i]
             self.cur_block += 1
+
         return tmp_count, tmp_reward
 
     def getTransTime(self, data):                 # 获得当前区块的最大传输时间 BFS
@@ -128,8 +128,8 @@ class Environment:
         self.FLAG = False
         self.edge_for_mst = []
 
-        # self.seed = int(sys.argv[1])
-        self.seed = 3
+        self.seed = int(sys.argv[1])
+        # self.seed = 1
         self.result = 0.0
         critic_output = open('./Output/Loss/seed=%d/critic_loss.txt' % self.seed, 'w')
         actor_output = open('./Output/Loss/seed=%d/actor_loss.txt' % self.seed, 'w')
@@ -172,7 +172,6 @@ class Environment:
             self.chain.append(Chain(self.source[i], self.dest[i], self.node_count))
 
         self.noise -= noise_attenuation
-        self.noise = max(self.noise, 0)
         self.noise = max(self.noise, 0)
 
         # 生成Output文件夹
@@ -267,6 +266,16 @@ def solve_delta(env):
     env.band_graph = divide.binary_search()   # 分配带宽
     for i in range(env.chain_count):
         env.chain[i].upd(env.route_graph[i], env.band_graph[i])
+    env.next_delta_task_time += delta_t
+
+    for i in range(env.node_count):
+        for j in range(env.node_count):
+            cost = 0.0
+            for p in range(env.chain_count):
+                cost += env.band_graph[p][i][j]
+            if cost > env.band[i][j]+0.1:
+                debug_print()
+                break
 
 
 def update_state(env):            # state: [chain1_history_state, chain2_history_state, chain1_buffer, chain2_buffer]
@@ -336,10 +345,25 @@ def show(it):
 def debug_print():
     debug_file = open("debug_info.txt", 'w')
 
+    for i in range(env.node_count):
+        for j in range(env.node_count):
+            cost = 0.0
+            for p in range(env.chain_count):
+                cost += env.band_graph[p][i][j]
+            print('%.2f' % cost, end='\t', file=debug_file)
+        print(file=debug_file)
+    print(file=debug_file)
+    for i in range(env.node_count):
+        for j in range(env.node_count):
+            print('%.2f' % env.band[i][j], end='\t', file=debug_file)
+        print(file=debug_file)
+    print(file=debug_file)
+
     for it in range(env.chain_count):
         g1 = env.chain[it].RTgraph
         g2 = env.chain[it].BDgraph
         for i in range(len(g1)):
+            print(i, ': ', end=' ', file=debug_file)
             for j in range(len(g1[i])):
                 print(g1[i][j], end=' ', file=debug_file)
             print('', file=debug_file)
@@ -380,10 +404,10 @@ if __name__ == '__main__':
     agent = DDPG(state_dim, action_dim, max_action)
 
     if load:
-        agent.load_train(env.seed, 19980)
+        agent.load_model(env.seed, load_number)
         env.noise = 0.0
 
-    for it in range(max_episode):
+    for it in range(max_episode+1):
         env.init_env()
         block_in_interval = 0.0
         reward_in_interval = 0.0
@@ -391,18 +415,19 @@ if __name__ == '__main__':
         for cnt in range(len(env.event_trace)):
             task = env.event_trace[cnt]
             if task.event_type == 1:                # deltaT事件
-                if block_in_interval >= 1.0:
-                    env.reward = -reward_in_interval / block_in_interval    # reward是平均时延 优化目标是越小越好，但是reward越大越好
-                else:
-                    env.reward = -10000.0            # 如果上个interval没有传输，那reward就无限小
+                if cnt == 0:                  # 如果是开始状态则只更新路由
+                    solve_delta(env)
+                    continue
+
+                env.reward = -reward_in_interval / block_in_interval    # reward是平均时延 优化目标是越小越好，但是reward越大越好
                 block_in_interval = 0.0
                 reward_in_interval = 0.0
-                update_state(env)               # calc next_state 只有下一个δt的时候才能知道这段内的reward和next state
-                if env.reward != 0:
-                    agent.replay_buffer.put([env.state, env.action, env.reward, env.next_state, np.float(env.done)])
 
-                # if not load and it >= 50 or load:
-                #     agent.update(env.seed)          # 更新DDPG网络
+                if env.chain[2].cur_block == 214:
+                    xx = 0
+
+                update_state(env)               # calc next_state 只有下一个δt的时候才能知道这段内的reward和next state
+                agent.replay_buffer.put([env.state, env.action, env.reward, env.next_state, np.float(env.done)])
                 if env.done:
                     break
 
@@ -410,9 +435,10 @@ if __name__ == '__main__':
                 env.reward = 0.0
                 solve_delta(env)
                 # debug_print()
-                env.next_delta_task_time += delta_t
                 for i in range(env.chain_count):     # 在堵塞的情况下，更新路由后应该接着传输之前没传完的区块
-                    env.chain[i].transmission()
+                    tmp_count, tmp_reward = env.chain[i].transmission()
+                    block_in_interval += tmp_count
+                    reward_in_interval += tmp_reward
 
             if task.event_type == 2:              # 新区块达到事件
                 env.chain[task.chainID].newBlock(task)
@@ -420,15 +446,17 @@ if __name__ == '__main__':
                 block_in_interval += tmp_count
                 reward_in_interval += tmp_reward
 
+        if not load and it > 50 or load:
+            agent.update(env.seed)
+
         if it % save_interval == 0:
             agent.save(env.seed, it)
         if it % graph_update_interval == 0:
             show(it)
         print("Iteration:\t%d done" % it)
-        if not load and it > 50 or load:
-            agent.update(env.seed)
         # if it == 100:
-        debug_print()
+        #     debug_print()
 
+    agent.save_model(env.seed, max_episode)
     show(max_episode)
 

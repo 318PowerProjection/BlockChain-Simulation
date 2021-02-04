@@ -18,7 +18,7 @@ class DivideBand:
 
         self.tmpBandGraph = []
         for i in range(len(self.Tree)):
-            self.tmpBandGraph.append([[0 for _ in range(self.n)] for __ in range(self.n)])
+            self.tmpBandGraph.append([[0 for _i in range(self.n)] for _j in range(self.n)])
 
     def calc_depth(self, now):
         q = Queue(maxsize=0)
@@ -69,41 +69,50 @@ class DivideBand:
         return bandGraph
 
     def check(self):
-        for i in range(self.n):      # init
-            for j in range(self.n):
-                self.cost[i][j] = 0
         for i in range(len(self.Tree)):
             for j in range(self.n):
                 for k in range(self.n):
                     self.tmpBandGraph[i][j][k] = 0
 
         for i in range(len(self.Tree)):
-            self.dfs_cost(i, self.source[i])     # calculate the cost of each edge
+            self.calc_band_of_each_tree(i, self.source[i])      # calculate the cost of each edge
+            self.recalc_band(i, -1, self.source[i])             # 子树里按照最大的重新分配带宽
 
+        self.cost = [[0 for _i in range(self.n)] for _j in range(self.n)]
+        for i in range(self.n):
+            for j in range(self.n):
+                for p in range(len(self.Tree)):
+                    self.cost[i][j] += self.tmpBandGraph[p][i][j]   # 计算总的带宽消耗
         for i in range(self.n):      # check
             for j in range(self.n):
                 if self.cost[i][j] > self.bandwidth[i][j]:
                     return False
         return True
 
-    def dfs_cost(self, now, u):
-        maxcost = 0
+    def calc_band_of_each_tree(self, now, u):
+        max_band = 0
         for v in self.Tree[now][u]:
             if self.depth[now][v] > self.depth[now][u]:
-                if len(self.Tree[now][v]) == 1:
-                    tmp2 = self.depth[now][v] * self.block_size[now] / self.tmp_delay
-                    self.tmpBandGraph[now][u][v] = tmp2
-                    self.tmpBandGraph[now][v][u] = tmp2
-                    self.cost[u][v] += tmp2
-                    self.cost[v][u] += tmp2
-                    maxcost = max(maxcost, self.tmpBandGraph[now][u][v])
-                    continue
+                if len(self.Tree[now][v]) == 1:                         # 如果是叶节点的话直接计算所需要的带宽
+                    tmp_band = self.depth[now][v] * self.block_size[now] / self.tmp_delay
+                else:
+                    tmp_band = self.calc_band_of_each_tree(now, v)
+                self.tmpBandGraph[now][u][v] = tmp_band
+                self.tmpBandGraph[now][v][u] = tmp_band
+                max_band = max(max_band, tmp_band)
+        return max_band
 
-                tmp = self.dfs_cost(now, v)
-                self.tmpBandGraph[now][u][v] = tmp
-                self.tmpBandGraph[now][v][u] = tmp
-                self.cost[u][v] += tmp
-                self.cost[v][u] += tmp
-                maxcost = max(tmp, maxcost)
-        return maxcost
-
+    def recalc_band(self, now, band, u):
+        if u != self.source[now] and len(self.Tree[now][u]) == 1:
+            return
+        for v in self.Tree[now][u]:
+            if self.depth[now][v] < self.depth[now][u]:
+                continue
+            if band == -1:
+                tmp_band = self.tmpBandGraph[now][u][v]     # 当u是主节点的时候，v是这课子树的根节点，整棵树的带宽都应该变成band[u][v]
+            else:
+                tmp_band = band
+            self.tmpBandGraph[now][u][v] = tmp_band
+            self.tmpBandGraph[now][v][u] = tmp_band
+            self.recalc_band(now, band, v)
+        return

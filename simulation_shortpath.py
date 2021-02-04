@@ -2,8 +2,6 @@ from queue import Queue
 from shortestpath import Shortest_path
 from MST import Mst
 from Divide import DivideBand
-# from read import readInfo
-import math
 
 
 def readInfo():
@@ -23,6 +21,7 @@ def readInfo():
         source.append(list(map(int, nodeFile[i + i].split())))
         dest.append(list(map(int, nodeFile[i + i + 1].split())))
     readfile.close()
+    data_size = list(map(float, nodeFile[len(nodeFile)-1].split()))
 
     # 输入graph和band为邻接表形式，转换成邻接矩阵
     tmpGraph = [[0 for _ in range(nodeCount)] for _ in range(nodeCount)]
@@ -33,11 +32,11 @@ def readInfo():
             tmpGraph[u][v] = 1
             tmpBand[u][v] = band[u][i]
             # print(u, i, band[u][i])
-    return tmpGraph, tmpBand, source, dest
+    return tmpGraph, tmpBand, source, dest, data_size
 
 
 _deltaT = 1
-graph, band, source, dest= readInfo()  # bandwidth Mbps
+graph, band, source, dest, data_size= readInfo()  # bandwidth Mbps
 nodeCount = len(graph)
 routingGraph = list()   # routingGraph[i][j]=list() 记录链i的j节点会向哪些节点发送区块
 bandGraph = list()      # bandGraph[i][j][k] 链i的(j,k)边的带宽   有向边
@@ -143,7 +142,6 @@ def solve_delta():
     for i in range(chainCount):
         source.append(chain[i].source)
         dest.append(chain[i].dest)
-    data_size = [1.0, 1.0]
     Divide = DivideBand(nodeCount, mstForDivide, band, source, dest, data_size)
     routingGraph = mstForDivide         # 最小生成树实际上就是路由方案
     bandGraph = Divide.binary_search()   # 分配带宽
@@ -192,6 +190,7 @@ if __name__ == '__main__':
 
     for p in range(chainCount):
         for i in range(nodeCount):
+            print(i, end=':', file=testOutput)
             for j in range(len(chain[p].RTgraph[i])):
                 print(chain[p].RTgraph[i][j], end=' ', file=testOutput)
             print(file=testOutput)

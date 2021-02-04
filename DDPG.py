@@ -13,15 +13,17 @@ class ReplayBuffer:
     def __init__(self):
         self.buffer = []
         self.maxSize = capacity
-        self.ptr = 0
+        self.ptr = -1
         self.cnt = 0
 
     def put(self, data):
-        if self.cnt < self.maxSize:
-            self.buffer.append(None)
-        self.buffer[self.ptr] = data
-        self.ptr = (self.ptr + 1) % self.maxSize
-        self.cnt += 1
+        if self.cnt == self.maxSize:
+            self.ptr = (self.ptr + 1) % self.maxSize
+            self.buffer[self.ptr] = data
+        else:
+            self.ptr += 1
+            self.cnt += 1
+            self.buffer.append(data)
 
     def take(self, batch_size):
         ind = np.random.randint(0, len(self.buffer), size=batch_size)
@@ -54,13 +56,13 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(Critic, self).__init__()
-        self.l1 = nn.Linear(state_dim + action_dim, 400)
-        self.l2 = nn.Linear(400, 300)
+        self.l1 = nn.Linear(state_dim, 400)
+        self.l2 = nn.Linear(400 + action_dim, 300)
         self.l3 = nn.Linear(300, 1)
 
     def forward(self, x, u):
-        x = F.relu(self.l1(torch.cat((x, u), 1)))
-        x = F.relu(self.l2(x))
+        x = F.relu(self.l1(x))
+        x = F.relu(self.l2(torch.cat([x, u], 1)))
         x = self.l3(x)
         return x
 
@@ -71,13 +73,13 @@ class DDPG(object):
         self.actor = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_target = Actor(state_dim, action_dim, max_action).to(device)
         self.actor_target.load_state_dict(self.actor.state_dict())
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_alpha)
+        self.actor_optimizer = optim.RMSprop(self.actor.parameters(), lr=actor_alpha, weight_decay=0.02)
         # actor的优化器
 
         self.critic = Critic(state_dim, action_dim).to(device)
         self.critic_target = Critic(state_dim, action_dim).to(device)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_alpha)
+        self.critic_optimizer = optim.RMSprop(self.critic.parameters(), lr=critic_alpha, weight_decay=0.02)
         self.replay_buffer = ReplayBuffer()
 
         self.num_training = 0
@@ -98,13 +100,13 @@ class DDPG(object):
 
             # Compute the target Q value
             target_Q = self.critic_target(next_state, self.actor_target(next_state))    # 求TD target
-            file = open("test_output.txt", 'w')
+            # file = open("test_output.txt", 'w')
             target_Q = reward + (done * gamma * target_Q).detach()                 # 求TD error
-            print(target_Q, file=file)
+            # print(target_Q, file=file)
             # Get current Q estimate
             current_Q = self.critic(state, action)          # 求Q值
-            print(current_Q, file=file)
-            file.close()
+            # print(current_Q, file=file)
+            # file.close()
 
             # Compute critic loss
             critic_output = open('./Output/Loss/seed=%d/critic_loss.txt' % seed, 'a')
@@ -115,6 +117,7 @@ class DDPG(object):
             # Optimize the critic
             self.critic_optimizer.zero_grad()       # 梯度下降基础操作
             critic_loss.backward()
+            nn.utils.clip_grad_value_(self.critic.parameters(), clip_value=2.5)
             self.critic_optimizer.step()
 
             # Compute actor loss
@@ -126,6 +129,7 @@ class DDPG(object):
             # Optimize the actor
             self.actor_optimizer.zero_grad()        # 梯度初始化为0
             actor_loss.backward()                   # 反向传播求梯度
+            nn.utils.clip_grad_value_(self.actor.parameters(), clip_value=2.5)
             self.actor_optimizer.step()             # 更新所有参数
 
             # Update the frozen target models
@@ -140,6 +144,9 @@ class DDPG(object):
 
     def save(self, seed, episode):
         torch.save(self.actor.state_dict(), './Output/Model/seed=%d/actor_%d.pth' % (seed, episode))
+
+    def save_model(self, seed, episode):
+        torch.save(self.actor.state_dict(), './Output/Model/seed=%d/actor_%d.pth' % (seed, episode))
         torch.save(self.critic.state_dict(), './Output/Model/seed=%d/critic_%d.pth' % (seed, episode))
         file = open('./Output/Model/seed=%d/buffer.pth' % seed, 'w')
         for it in self.replay_buffer.buffer:
@@ -149,7 +156,7 @@ class DDPG(object):
     def load(self, seed, episode):
         self.actor.load_state_dict(torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
 
-    def load_train(self, seed, episode):
+    def load_model(self, seed, episode):
         self.actor.load_state_dict(
             torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
         self.critic.load_state_dict(
