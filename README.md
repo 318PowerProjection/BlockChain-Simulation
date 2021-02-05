@@ -5,7 +5,7 @@
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D1/actor_loss.png" >seed=1 actor loss </center></td>
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D1/critic_loss.png" >seed=1 critic loss</center></td>
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D1/average_delay.png" >seed=1 average delay</center></td>
-        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D2/average_trans_time.png" >seed=1 average trans time</center></td>
+        <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D1/average_trans_time.png" >seed=1 average trans time</center></td>
     </tr>
     <tr>
         <td ><center><img src="https://github.com/318PowerProjection/BlockChain-Simulation/blob/main/Graph/seed%3D2/actor_loss.png" >seed=2 actor loss </center></td>
