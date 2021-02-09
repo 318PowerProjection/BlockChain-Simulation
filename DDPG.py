@@ -147,19 +147,26 @@ class DDPG(object):
 
     def save_model(self, seed, episode):
         torch.save(self.actor.state_dict(), './Output/Model/seed=%d/actor_%d.pth' % (seed, episode))
+        torch.save(self.actor_target.state_dict(), './Output/Model/seed=%d/actor_%d.pth' % (seed, episode))
         torch.save(self.critic.state_dict(), './Output/Model/seed=%d/critic_%d.pth' % (seed, episode))
+        torch.save(self.critic_target.state_dict(), './Output/Model/seed=%d/critic_%d.pth' % (seed, episode))
         file = open('./Output/Model/seed=%d/buffer.pth' % seed, 'w')
         for it in self.replay_buffer.buffer:
             print(it, file=file)
         file.close()
 
     def load(self, seed, episode):
-        self.actor.load_state_dict(torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+        self.actor.load_state_dict(
+            torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
 
     def load_model(self, seed, episode):
         self.actor.load_state_dict(
             torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+        self.actor_target.load_state_dict(
+            torch.load('./Output/Model/seed=%d/actor_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
         self.critic.load_state_dict(
+            torch.load('./Output/Model/seed=%d/critic_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
+        self.critic_target.load_state_dict(
             torch.load('./Output/Model/seed=%d/critic_%d.pth' % (seed, episode), map_location=torch.device('cpu')))
         self.replay_buffer.buffer = []
         file = open('./Output/Model/seed=%d/buffer.pth' % seed, 'r')
