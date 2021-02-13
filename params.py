@@ -1,5 +1,5 @@
 # argument of simulation
-max_episode = 200000
+max_episode = 200
 exploration_noise = 0.5
 noise_attenuation = exploration_noise / float(max_episode/2)
 save_interval = 20

@@ -7,6 +7,7 @@ import torch
 import sys
 import os
 import matplotlib
+from shortestpath import Shortest_path
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from params import max_episode, exploration_noise, noise_attenuation, save_interval, state_history, max_action, \
@@ -161,8 +162,8 @@ class Environment:
         self.next_delta_task_time = 0
         self.count_for_each_chain = [0 for _ in range(self.chain_count)]
 
-        self.state = [0 for _ in range(self.chain_count * state_history + self.chain_count)]
-        self.action = [0 for _ in range(self.chain_count * self.edge_count)]
+        self.state = [0 for _ in range(state_history + 1)]
+        self.action = [0 for _ in range(self.edge_count)]
         self.next_state = self.state
         self.reward = 0.0
         self.done = False
@@ -228,36 +229,47 @@ def convention_action(action):     # 规约化action 使用正态分布加噪声
 
 
 def convention_state(state):
-    p = state_history-1
-    for i in range(env.chain_count):
-        state[p] /= 50.0
-        p += state_history
-    for j in range(state_history * env.chain_count, state_history * env.chain_count + env.chain_count):
+    state[state_history] /= 50.0
+    for j in range(state_history):
         state[j] /= 10.0
     return state
 
 
 def trans(env):         # 把action变成chaincount个邻接表
     edge_action = []
-    p = 0
-    for i in range(env.chain_count):
-        tmp_edge = []
-        for j in range(env.edge_count):
-            tmp_edge.append(Edge(env.edge[j].u, env.edge[j].v, env.action[j+p]))
-        edge_action.append(tmp_edge)
-        p += env.edge_count
+    tmp_edge = []
+    for j in range(env.edge_count):
+        tmp_edge.append(Edge(env.edge[j].u, env.edge[j].v, env.action[j]))
+    edge_action.append(tmp_edge)
     return edge_action
+
+
+def trans2(nodeCount, graph):
+    result = []
+    for i in range(nodeCount):
+        for j in range(nodeCount):
+            if i < j and graph[i][j] == 1:
+               result.append(Edge(i, j, 1))
+    return result
 
 
 def solve_delta(env):
     mst_for_divide = []
     env.action = agent.select_action(env.state)
-    env.action = (env.action + np.random.normal(env.noise, env.noise, size=env.edge_count * env.chain_count))
+    env.action = (env.action + np.random.normal(env.noise, env.noise, size=env.edge_count))
     env.action = convention_action(env.action)
     env.edge_for_mst = trans(env)
 
-    for i in range(env.chain_count):
-        mst = Mst(env.node_count, env.edge_for_mst[i])
+    mst = Mst(env.node_count, env.edge_for_mst[0])  # 第0条链变成DDPG
+    tree = mst.kruskal()   # 邻接表形式 无向边
+    mst_for_divide.append(tree)
+
+    for i in range(1, env.chain_count):             # 后两条边变成最短路
+        routing = Shortest_path(env.graph, env.chain[i].source, env.chain[i].dest)
+        routing.main()
+        tmp_graph = routing.result
+        tmp_graph = trans2(env.node_count, tmp_graph)
+        mst = Mst(env.node_count, tmp_graph)
         tree = mst.kruskal()   # 邻接表形式 无向边
         mst_for_divide.append(tree)
 
@@ -267,15 +279,6 @@ def solve_delta(env):
     for i in range(env.chain_count):
         env.chain[i].upd(env.route_graph[i], env.band_graph[i])
     env.next_delta_task_time += delta_t
-
-    for i in range(env.node_count):
-        for j in range(env.node_count):
-            cost = 0.0
-            for p in range(env.chain_count):
-                cost += env.band_graph[p][i][j]
-            if cost > env.band[i][j]+0.1:
-                debug_print()
-                break
 
 
 def update_state(env):            # state: [chain1_history_state, chain2_history_state, chain1_buffer, chain2_buffer]
@@ -287,13 +290,11 @@ def update_state(env):            # state: [chain1_history_state, chain2_history
         env.now_transaction += 1
 
     env.next_state = env.state
-    for i in range(env.chain_count):
-        for p in range(state_history-1):
-            env.next_state[p+i*state_history] = env.next_state[p+1+i*state_history]
-        env.next_state[i*state_history+state_history-1] = count_for_each_chain[i]
+    for p in range(state_history-1):
+        env.next_state[p] = env.next_state[p+1]
+    env.next_state[state_history-1] = count_for_each_chain[0]
 
-    for i in range(env.chain_count):
-        env.next_state[env.chain_count*state_history+i] = env.chain[i].block_count - env.chain[i].cur_block
+    env.next_state[state_history] = env.chain[0].block_count - env.chain[0].cur_block
 
     env.next_state = convention_state(env.next_state)
         
@@ -382,15 +383,6 @@ def debug_print():
     debug_file.close()
 
 
-def check_done():
-    cnt = 0
-    for i in range(env.chain_count):
-        cnt += env.chain[i].cur_block+1
-    if cnt == env.total_block_count:
-        return 1
-    return 0
-
-
 if __name__ == '__main__':
     env = Environment()
     env.init_trace()
@@ -399,8 +391,8 @@ if __name__ == '__main__':
     np.random.seed(numpy_seed)
     torch.manual_seed(env.seed)
 
-    state_dim = state_history * env.chain_count + env.chain_count
-    action_dim = env.edge_count * env.chain_count
+    state_dim = state_history + 1           # 第一条链变成DDPG 其他最短路
+    action_dim = env.edge_count
     agent = DDPG(state_dim, action_dim, max_action)
 
     if load:
@@ -443,7 +435,7 @@ if __name__ == '__main__':
                 block_in_interval += tmp_count
                 reward_in_interval += tmp_reward
 
-        if not load and it > 1000 or load:
+        if not load and it > 500 or load:  # 前100轮不会进loss图
             agent.update(env.seed)
 
         if it % save_interval == 0:
@@ -451,9 +443,8 @@ if __name__ == '__main__':
         if it % graph_update_interval == 0:
             show(it)
         print("Iteration:\t%d done" % it)
-        # if it == 100:
+        # if it == 200:
         #     debug_print()
 
     agent.save_model(env.seed, max_episode)
-    show(max_episode)
 

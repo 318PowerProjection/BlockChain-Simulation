@@ -1,4 +1,5 @@
 from queue import Queue
+from shortestpath import Shortest_path
 from MST import Mst
 from Divide import DivideBand
 from DDPG import DDPG
@@ -160,8 +161,8 @@ class Environment:
         self.next_delta_task_time = 0
         self.count_for_each_chain = [0 for _ in range(self.chain_count)]
 
-        self.state = [0 for _ in range(self.chain_count * state_history + self.chain_count)]
-        self.action = [0 for _ in range(self.chain_count * self.edge_count)]
+        self.state = [0 for _ in range(state_history + 1)]
+        self.action = [0 for _ in range(self.edge_count)]
         self.next_state = self.state
         self.reward = 0.0
         self.done = False
@@ -220,35 +221,50 @@ def convention_action(action):  # 规约化action 使用正态分布加噪声会
     return list(ret)
 
 
-def trans(env):  # 把action变成chaincount个邻接表
+def trans(env):         # 把action变成chaincount个邻接表
     edge_action = []
-    p = 0
-    for i in range(env.chain_count):
-        tmp_edge = []
-        for j in range(env.edge_count):
-            tmp_edge.append(Edge(env.edge[j].u, env.edge[j].v, env.action[j + p]))
-        edge_action.append(tmp_edge)
-        p += env.edge_count
+    tmp_edge = []
+    for j in range(env.edge_count):
+        tmp_edge.append(Edge(env.edge[j].u, env.edge[j].v, env.action[j]))
+    edge_action.append(tmp_edge)
     return edge_action
+
+
+def trans2(nodeCount, graph):
+    result = []
+    for i in range(nodeCount):
+        for j in range(nodeCount):
+            if i < j and graph[i][j] == 1:
+               result.append(Edge(i, j, 1))
+    return result
 
 
 def solve_delta(env):
     mst_for_divide = []
     env.action = agent.select_action(env.state)
-    env.action = (env.action + np.random.normal(env.noise, env.noise, size=env.edge_count * env.chain_count))
+    env.action = (env.action + np.random.normal(env.noise, env.noise, size=env.edge_count))
     env.action = convention_action(env.action)
     env.edge_for_mst = trans(env)
 
-    for i in range(env.chain_count):
-        mst = Mst(env.node_count, env.edge_for_mst[i])
-        tree = mst.kruskal()  # 邻接表形式 无向边
+    mst = Mst(env.node_count, env.edge_for_mst[0])  # 第0条链变成DDPG
+    tree = mst.kruskal()   # 邻接表形式 无向边
+    mst_for_divide.append(tree)
+
+    for i in range(1, env.chain_count):             # 后两条边变成最短路
+        routing = Shortest_path(env.graph, env.chain[i].source, env.chain[i].dest)
+        routing.main()
+        tmp_graph = routing.result
+        tmp_graph = trans2(env.node_count, tmp_graph)
+        mst = Mst(env.node_count, tmp_graph)
+        tree = mst.kruskal()   # 邻接表形式 无向边
         mst_for_divide.append(tree)
 
     divide = DivideBand(env.node_count, mst_for_divide, env.band, env.source, env.dest, env.block_size)
-    env.route_graph = mst_for_divide  # 最小生成树实际上就是路由方案
-    env.band_graph = divide.binary_search()  # 分配带宽
+    env.route_graph = mst_for_divide         # 最小生成树实际上就是路由方案
+    env.band_graph = divide.binary_search()   # 分配带宽
     for i in range(env.chain_count):
         env.chain[i].upd(env.route_graph[i], env.band_graph[i])
+    env.next_delta_task_time += delta_t
 
 
 def show(it):
@@ -266,11 +282,12 @@ def show(it):
     plt.title("Average Delay")
     plt.xlabel("Episode")
     plt.ylabel("Average Delay")
-    plt.figure(figsize=(12, 6))
+    # plt.figure(figsize=(12, 6))
     plt.grid(True)
     plt.plot(x, y)
     plt.plot(x, compare_y)
     plt.savefig('./Output/Graph/seed=%d/average_delay.png' % env.seed)
+    plt.close()
     print("====================================")
     print("Graph is updated...")
     print("====================================")
@@ -291,11 +308,12 @@ def show_tans_time(it):
     plt.title("Average Delay")
     plt.xlabel("Episode")
     plt.ylabel("Average Delay")
-    plt.figure(figsize=(12, 6))
+    # plt.figure(figsize=(12, 6))
     plt.grid(True)
     plt.plot(x, y)
     plt.plot(x, compare_y)
     plt.savefig('./Output/Graph/seed=%d/average_trans_time.png' % env.seed)
+    plt.close()
     print("====================================")
     print("Graph is updated...")
     print("====================================")
@@ -308,11 +326,17 @@ def debug_print():
         g1 = env.chain[it].RTgraph
         g2 = env.chain[it].BDgraph
         for i in range(len(g1)):
+            print(i, ':', end=' ', file=debug_file)
             for j in range(len(g1[i])):
                 print(g1[i][j], end=' ', file=debug_file)
             print('', file=debug_file)
         print('', file=debug_file)
+
+        for j in range(len(g2[0])+1):
+            print('\t%d' % (j-1), end=' ', file=debug_file)
+        print('', file=debug_file)
         for i in range(len(g2)):
+            print('\t%d' % i, end=' ', file=debug_file)
             for j in range(len(g2[i])):
                 print('\t%.2lf' % g2[i][j], end=' ', file=debug_file)
             print('', file=debug_file)
@@ -348,11 +372,12 @@ if __name__ == '__main__':
     np.random.seed(numpy_seed)
     torch.manual_seed(env.seed)
 
-    state_dim = state_history * env.chain_count + env.chain_count
-    action_dim = env.edge_count * env.chain_count
+    state_dim = state_history + 1
+    action_dim = env.edge_count
     agent = DDPG(state_dim, action_dim, max_action)
 
-    for it in range(max_episode+1):
+    specified_model = int(sys.argv[2])
+    for it in range(specified_model, specified_model+1):
         if it % save_interval != 0:
             continue
         agent.load(env.seed, it)
@@ -369,9 +394,9 @@ if __name__ == '__main__':
                 env.chain[task.chainID].newBlock(task)
                 env.chain[task.chainID].transmission()
 
-        if it % graph_update_interval == 0:
-            show(it)
-            show_tans_time(it)
+        # if it % graph_update_interval == 0:
+        #     show(it)
+        #     show_tans_time(it)
 
         total_reward = 0.0
         total_trans_time = 0.0
@@ -391,4 +416,5 @@ if __name__ == '__main__':
         # debug_show_trans_time(it)
 
         # if it == 100:
-        #    debug_print()
+        debug_print()
+

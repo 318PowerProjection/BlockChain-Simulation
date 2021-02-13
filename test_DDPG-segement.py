@@ -127,6 +127,8 @@ class Environment:
         self.edge_for_mst = []
 
         self.seed = int(sys.argv[1])
+        self.left = int(sys.argv[2])
+        self.right = int(sys.argv[3])
         # self.seed = 1
         self.result = []
         self.trans_time_result = []
@@ -220,6 +222,39 @@ def convention_action(action):  # 规约化action 使用正态分布加噪声会
     return list(ret)
 
 
+def convention_state(state):
+    p = state_history-1
+    for i in range(env.chain_count):
+        state[p] /= 50.0
+        p += state_history
+    for j in range(state_history * env.chain_count, state_history * env.chain_count + env.chain_count):
+        state[j] /= 10.0
+    return state
+
+
+def update_state(env):  # state: [chain1_history_state, chain2_history_state, chain1_buffer, chain2_buffer]
+    count_for_each_chain = [0 for _ in range(env.chain_count)]
+    env.now_transaction += 1  # 每次now_transaction会停留在一个type=1的位置
+    while env.now_transaction < len(env.transaction_trace) and env.transaction_trace[env.now_transaction].event_type == 1:
+        env.now_transaction += 1
+    while env.now_transaction < len(env.transaction_trace) and env.transaction_trace[env.now_transaction].event_type == 2:
+        chainID = env.transaction_trace[env.now_transaction].chainID
+        count_for_each_chain[chainID] += 1  # 计算每个链在一个间隔内的交易流量
+        env.now_transaction += 1
+
+    env.next_state = env.state
+    for i in range(env.chain_count):
+        for p in range(state_history - 1):
+            env.next_state[p + i * state_history] = env.next_state[p + 1 + i * state_history]
+        env.next_state[i * state_history + state_history - 1] = count_for_each_chain[i]
+
+    for i in range(env.chain_count):
+        env.next_state[env.chain_count * state_history + i] = env.chain[i].block_count - env.chain[i].cur_block
+
+    env.next_state = convention_state(env.next_state)
+    env.state = env.next_state
+
+
 def trans(env):  # 把action变成chaincount个邻接表
     edge_action = []
     p = 0
@@ -252,12 +287,11 @@ def solve_delta(env):
 
 
 def show(it):
-    if it == 0:
-        return
-    x = np.arange(0, it/save_interval)
+    x = np.arange(env.left/save_interval, it/save_interval)
     y = np.array(env.result)
     compare_y = np.array([51.51]*len(x))
 
+    # print(it)
     # print(x)
     # print(y)
 
@@ -270,16 +304,14 @@ def show(it):
     plt.grid(True)
     plt.plot(x, y)
     plt.plot(x, compare_y)
-    plt.savefig('./Output/Graph/seed=%d/average_delay.png' % env.seed)
+    plt.savefig('./Output/Graph/seed=%d/average_delay%d.png' % (env.seed, env.left))
     print("====================================")
     print("Graph is updated...")
     print("====================================")
 
 
 def show_tans_time(it):
-    if it == 0:
-        return
-    x = np.arange(0, it/save_interval)
+    x = np.arange(env.left/save_interval, it/save_interval)
     y = np.array(env.trans_time_result)
     compare_y = np.array([0.9]*len(x))
 
@@ -295,7 +327,7 @@ def show_tans_time(it):
     plt.grid(True)
     plt.plot(x, y)
     plt.plot(x, compare_y)
-    plt.savefig('./Output/Graph/seed=%d/average_trans_time.png' % env.seed)
+    plt.savefig('./Output/Graph/seed=%d/average_trans_time%d.png' % (env.seed, env.left))
     print("====================================")
     print("Graph is updated...")
     print("====================================")
@@ -352,7 +384,7 @@ if __name__ == '__main__':
     action_dim = env.edge_count * env.chain_count
     agent = DDPG(state_dim, action_dim, max_action)
 
-    for it in range(max_episode+1):
+    for it in range(env.left, env.right):
         if it % save_interval != 0:
             continue
         agent.load(env.seed, it)
@@ -361,6 +393,7 @@ if __name__ == '__main__':
         for cnt in range(len(env.event_trace)):
             task = env.event_trace[cnt]
             if task.event_type == 1:                # deltaT事件
+                update_state(env)
                 solve_delta(env)
                 env.next_delta_task_time += delta_t
                 for i in range(env.chain_count):     # 在堵塞的情况下，更新路由后应该接着传输之前没传完的区块
@@ -392,3 +425,7 @@ if __name__ == '__main__':
 
         # if it == 100:
         #    debug_print()
+
+    # show(max_episode)
+    # show_tans_time(max_episode)
+
